@@ -7,7 +7,7 @@ const { getNumber, isAdmin, botIsAdmin, containsLink, containsTagAll, isGroupMen
 const { isPremium, getPremiumExpiry, getPremiumList, activatePremium, deactivatePremium, addToPremiumGroup, addToPremiumChannel, removeFromPremiumSpaces, syncAllPremiumToSpaces, setPremiumGroup, setPremiumChannel, setAutoJoin, getPremiumGroupId, getPremiumChannelId, getPremiumSettings } = require('./premium');
 const { addBotUser, getBotUser, getAllBotUsers, updateBotUser, addUserToGroup, getSetting, setSetting, setBan, removeBan, getBan, setPairedUser, getPendingPayments, approvePayment, rejectPayment } = require('./database');
 const { DEFAULT_PREFIX, BOT_NAME, RESPONSE_IMAGE_URL, HIJACK_ICON_URL, GROUP_INVITE_CODE, OWNERS, DEVELOPERS } = require('./config');
-const { downloadMediaMessage, generateWAMessageFromContent } = require('@ostyado/baileys');
+const { downloadMediaMessage, generateWAMessageFromContent } = require('@whiskeysockets/baileys');
 const axios = require('axios');
 
 // ================================================================================================
