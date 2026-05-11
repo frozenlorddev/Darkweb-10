@@ -9,7 +9,7 @@ const chalk = require('chalk');
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@ostyado/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 
 const config = require('./config');
 const { handleCommand, checkSpam, spamShield } = require('./commands');
