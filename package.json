@@ -1,7 +1,7 @@
 {
   "name": "darkweb-ai-multi",
   "version": "6.0.0",
-  "description": "Darkweb AI WhatsApp Bot – Multi‑Session (up to 30 users) with Web Pairing",
+  "description": "Darkweb AI WhatsApp Bot – Multi‑Session (up to 30 users) with Web Pairing and PostgreSQL",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -12,7 +12,8 @@
     "multi-session",
     "darkweb",
     "baileys",
-    "whatsapp-web"
+    "whatsapp-web",
+    "postgresql"
   ],
   "author": "Darkweb AI Council",
   "license": "MIT",
@@ -25,6 +26,7 @@
     "express": "^4.18.2",
     "fluent-ffmpeg": "^2.1.2",
     "jimp": "^0.22.12",
+    "pg": "^8.11.3",
     "pino": "^8.17.0",
     "qrcode": "^1.5.3"
   },
