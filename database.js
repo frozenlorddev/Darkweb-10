@@ -1,5 +1,6 @@
 // ==================================================================
-// DATABASE.JS – Neon PostgreSQL Version (with loadSettings/saveSettings)
+// DATABASE.JS – Neon PostgreSQL Version
+// Ensures tables exist before any query
 // ==================================================================
 
 const { Pool } = require('pg');
@@ -10,8 +11,10 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-// ========== INITIALIZE TABLES ==========
-async function initDatabase() {
+// ========== INITIALIZATION PROMISE ==========
+let dbReady = null;
+
+async function ensureTables() {
     const queries = [
         `CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -75,12 +78,6 @@ async function initDatabase() {
             expiry BIGINT,
             days INT,
             collected_by TEXT
-        )`,
-        `CREATE TABLE IF NOT EXISTS warning_counts (
-            phone TEXT,
-            type TEXT,
-            count INT,
-            PRIMARY KEY (phone, type)
         )`
     ];
     for (const query of queries) {
@@ -88,12 +85,18 @@ async function initDatabase() {
     }
     console.log('✅ PostgreSQL tables ready');
 }
-initDatabase().catch(console.error);
 
-// ========== SETTINGS (full object load/save) ==========
+// Initialize DB once
+dbReady = ensureTables().catch(err => {
+    console.error('❌ Database initialization failed:', err);
+    process.exit(1);
+});
+
+// ========== SETTINGS CACHE ==========
 let settingsCache = null;
 
 async function loadSettings() {
+    await dbReady; // Wait for tables to exist
     if (settingsCache) return settingsCache;
     const res = await pool.query('SELECT key, value FROM settings');
     const settings = {
@@ -125,6 +128,7 @@ async function loadSettings() {
 }
 
 async function saveSettings(settings) {
+    await dbReady;
     settingsCache = settings;
     for (const [key, value] of Object.entries(settings)) {
         let storeValue = value;
@@ -138,12 +142,14 @@ async function saveSettings(settings) {
     }
 }
 
-// ========== SINGLE KEY GET/SET (alternative) ==========
 async function getSetting(key, defaultValue = null) {
+    await dbReady;
     const res = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
     return res.rows[0]?.value ?? defaultValue;
 }
+
 async function setSetting(key, value) {
+    await dbReady;
     await pool.query(
         'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
         [key, value]
@@ -153,24 +159,29 @@ async function setSetting(key, value) {
 
 // ========== BANS ==========
 async function setBan(phone, level = 1, reason = 'Violation') {
+    await dbReady;
     await pool.query(
         'INSERT INTO bans (phone, level, reason, date) VALUES ($1, $2, $3, NOW()) ON CONFLICT (phone) DO UPDATE SET level = $2, reason = $3, date = NOW()',
         [phone, level, reason]
     );
 }
 async function removeBan(phone) {
+    await dbReady;
     await pool.query('DELETE FROM bans WHERE phone = $1', [phone]);
 }
 async function getBan(phone) {
+    await dbReady;
     const res = await pool.query('SELECT * FROM bans WHERE phone = $1', [phone]);
     return res.rows[0] || null;
 }
 async function isBanned(phone) {
+    await dbReady;
     const res = await pool.query('SELECT 1 FROM bans WHERE phone = $1', [phone]);
     return res.rowCount > 0;
 }
 let bansCache = new Map();
 async function loadBans() {
+    await dbReady;
     const res = await pool.query('SELECT * FROM bans');
     bansCache.clear();
     for (const row of res.rows) bansCache.set(row.phone, row);
@@ -180,19 +191,23 @@ function saveBans() {}
 
 // ========== PAIRED DEVICES ==========
 async function setPairedUser(phone, code) {
+    await dbReady;
     await pool.query(
         'INSERT INTO paired_users (phone, code, timestamp, expires) VALUES ($1, $2, $3, $4) ON CONFLICT (phone) DO UPDATE SET code = $2, timestamp = $3, expires = $4',
         [phone, code, Date.now(), Date.now() + 300000]
     );
 }
 async function getPairedUser(phone) {
+    await dbReady;
     const res = await pool.query('SELECT * FROM paired_users WHERE phone = $1 AND expires > $2', [phone, Date.now()]);
     return res.rows[0] || null;
 }
 async function removePairedUser(phone) {
+    await dbReady;
     await pool.query('DELETE FROM paired_users WHERE phone = $1', [phone]);
 }
 async function loadPaired() {
+    await dbReady;
     const res = await pool.query('SELECT * FROM paired_users');
     const pairedMap = new Map();
     for (const row of res.rows) pairedMap.set(row.phone, row);
@@ -202,6 +217,7 @@ function savePaired() {}
 
 // ========== BOT USERS ==========
 async function addBotUser(phone, name = '', fromGroup = false) {
+    await dbReady;
     const exists = await pool.query('SELECT 1 FROM bot_users WHERE phone = $1', [phone]);
     if (exists.rowCount === 0) {
         await pool.query(
@@ -216,18 +232,22 @@ async function addBotUser(phone, name = '', fromGroup = false) {
     }
 }
 async function getBotUser(phone) {
+    await dbReady;
     const res = await pool.query('SELECT * FROM bot_users WHERE phone = $1', [phone]);
     return res.rows[0] || null;
 }
 async function getAllBotUsers() {
+    await dbReady;
     const res = await pool.query('SELECT * FROM bot_users');
     return res.rows;
 }
 async function getBotUsersCount() {
+    await dbReady;
     const res = await pool.query('SELECT COUNT(*) FROM bot_users');
     return parseInt(res.rows[0].count);
 }
 async function loadBotUsers() {
+    await dbReady;
     const res = await pool.query('SELECT * FROM bot_users');
     const map = new Map();
     for (const row of res.rows) map.set(row.phone, row);
@@ -237,18 +257,22 @@ function saveBotUsers() {}
 
 // ========== PREMIUM ==========
 async function isPremium(phone) {
+    await dbReady;
     const res = await pool.query('SELECT expiry FROM premium_users WHERE phone = $1 AND expiry > $2', [phone, Date.now()]);
     return res.rowCount > 0;
 }
 async function getPremiumExpiry(phone) {
+    await dbReady;
     const res = await pool.query('SELECT expiry FROM premium_users WHERE phone = $1', [phone]);
     return res.rows[0] ? new Date(res.rows[0].expiry) : null;
 }
 async function getPremiumList() {
+    await dbReady;
     const res = await pool.query('SELECT phone FROM premium_users WHERE expiry > $1', [Date.now()]);
     return res.rows.map(r => r.phone);
 }
 async function activatePremium(phone, days = 30, collectedBy = 'Unknown', sock = null) {
+    await dbReady;
     const expiry = Date.now() + (days * 86400000);
     await pool.query(
         'INSERT INTO premium_users (phone, activated_on, expiry, days, collected_by) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (phone) DO UPDATE SET expiry = $3, days = $4, collected_by = $5',
@@ -257,9 +281,11 @@ async function activatePremium(phone, days = 30, collectedBy = 'Unknown', sock =
     return { joinedGroup: false, joinedChannel: false };
 }
 async function deactivatePremium(phone) {
+    await dbReady;
     await pool.query('DELETE FROM premium_users WHERE phone = $1', [phone]);
 }
 async function loadPremium() {
+    await dbReady;
     const res = await pool.query('SELECT * FROM premium_users');
     const map = new Map();
     for (const row of res.rows) map.set(row.phone, row);
@@ -269,6 +295,7 @@ function savePremium() {}
 
 // ========== USER GOLD ==========
 async function getUserGold(phone) {
+    await dbReady;
     const res = await pool.query('SELECT * FROM user_gold WHERE phone = $1', [phone]);
     if (res.rows[0]) return res.rows[0];
     return {
@@ -289,6 +316,7 @@ async function getUserGold(phone) {
     };
 }
 async function saveUserGold(phone, data) {
+    await dbReady;
     await pool.query(
         `INSERT INTO user_gold (phone, gold, vault, hp, last_daily, last_work, last_crime, last_rob, last_gamble, last_hijack, hijack_count, referrals, achievements, items)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
@@ -304,6 +332,7 @@ async function saveUserGold(phone, data) {
 
 // ========== PAYMENTS ==========
 async function addPaymentRequest(phone, amount = 100) {
+    await dbReady;
     const id = Date.now() + '_' + Math.random().toString(36).substring(2);
     await pool.query(
         'INSERT INTO payments (id, phone, amount, status, requested_on) VALUES ($1, $2, $3, $4, $5)',
@@ -312,20 +341,25 @@ async function addPaymentRequest(phone, amount = 100) {
     return id;
 }
 async function getPendingPayments() {
+    await dbReady;
     const res = await pool.query("SELECT * FROM payments WHERE status = 'pending'");
     return res.rows;
 }
 async function getAllPayments() {
+    await dbReady;
     const res = await pool.query('SELECT * FROM payments');
     return res.rows;
 }
 async function approvePayment(id, approvedBy) {
+    await dbReady;
     await pool.query('UPDATE payments SET status = $1, approved_by = $2, approved_on = $3 WHERE id = $4', ['approved', approvedBy, Date.now(), id]);
 }
 async function rejectPayment(id) {
+    await dbReady;
     await pool.query("UPDATE payments SET status = 'rejected' WHERE id = $1", [id]);
 }
 async function loadPayments() {
+    await dbReady;
     const res = await pool.query('SELECT * FROM payments');
     const map = new Map();
     for (const row of res.rows) map.set(row.id, row);
@@ -335,6 +369,7 @@ function savePayments() {}
 
 // ========== GROUP SETTINGS ==========
 async function getGroupSettings(groupId) {
+    await dbReady;
     const res = await pool.query('SELECT settings FROM group_settings WHERE group_id = $1', [groupId]);
     if (res.rows[0]) return res.rows[0].settings;
     const defaults = { antilink: 'off', welcome: false, goodbye: false, antibot: false, antigroupmention: 'off', antitagall: 'off' };
@@ -342,11 +377,13 @@ async function getGroupSettings(groupId) {
     return defaults;
 }
 async function setGroupSetting(groupId, key, value) {
+    await dbReady;
     const settings = await getGroupSettings(groupId);
     settings[key] = value;
     await pool.query('UPDATE group_settings SET settings = $1 WHERE group_id = $2', [settings, groupId]);
 }
 async function loadGroups() {
+    await dbReady;
     const res = await pool.query('SELECT * FROM group_settings');
     const map = new Map();
     for (const row of res.rows) map.set(row.group_id, row.settings);
@@ -354,8 +391,9 @@ async function loadGroups() {
 }
 function saveGroups() {}
 
-// ========== TEMP BANS (stored in settings table) ==========
+// ========== TEMP BANS ==========
 async function getTempBan(phone) {
+    await dbReady;
     const tempbans = (await getSetting('tempbans', {}));
     const expiry = tempbans[phone];
     if (!expiry) return null;
@@ -367,11 +405,13 @@ async function getTempBan(phone) {
     return expiry;
 }
 async function setTempBan(phone, minutes = 60) {
+    await dbReady;
     const tempbans = (await getSetting('tempbans', {}));
     tempbans[phone] = Date.now() + (minutes * 60000);
     await setSetting('tempbans', tempbans);
 }
 async function removeTempBan(phone) {
+    await dbReady;
     const tempbans = (await getSetting('tempbans', {}));
     delete tempbans[phone];
     await setSetting('tempbans', tempbans);
@@ -382,26 +422,16 @@ async function isTempBanned(phone) {
 
 // ========== CLEANUP ==========
 async function cleanupExpiredData() {
+    await dbReady;
     await pool.query('DELETE FROM premium_users WHERE expiry < $1', [Date.now()]);
     await pool.query('DELETE FROM paired_users WHERE expires < $1', [Date.now()]);
     const weekAgo = Date.now() - (7 * 86400000);
     await pool.query("DELETE FROM payments WHERE status = 'pending' AND requested_on < $1", [weekAgo]);
 }
 
-// ========== LOAD ALL (legacy compatibility) ==========
-async function loadAll() {
-    await loadBans();
-    await loadPaired();
-    await loadBotUsers();
-    await loadPayments();
-    await loadGroups();
-    await loadPremium();
-}
-loadAll().catch(console.error);
-
 // ========== EXPORTS ==========
 module.exports = {
-    // Core settings (load/save whole object)
+    // Settings
     loadSettings,
     saveSettings,
     getSetting,
@@ -418,7 +448,7 @@ module.exports = {
     getGroupSettings, setGroupSetting, loadGroups, saveGroups, groupSettings: new Map(),
     // Premium
     isPremium, getPremiumExpiry, getPremiumList, activatePremium, deactivatePremium, loadPremium, savePremium, premiumUsers: new Map(),
-    // Gold economy
+    // Gold
     getUserGold, saveUserGold,
     // Temp bans
     setTempBan, getTempBan, removeTempBan, isTempBanned,
