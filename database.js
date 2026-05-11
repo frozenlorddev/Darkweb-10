@@ -1,14 +1,13 @@
 // ==================================================================
-// DATABASE.JS – Neon PostgreSQL Version (Persistent)
+// DATABASE.JS – Neon PostgreSQL Version (with loadSettings/saveSettings)
 // ==================================================================
 
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// PostgreSQL connection pool
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false } // Required for Neon
+    ssl: { rejectUnauthorized: false }
 });
 
 // ========== INITIALIZE TABLES ==========
@@ -76,6 +75,12 @@ async function initDatabase() {
             expiry BIGINT,
             days INT,
             collected_by TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS warning_counts (
+            phone TEXT,
+            type TEXT,
+            count INT,
+            PRIMARY KEY (phone, type)
         )`
     ];
     for (const query of queries) {
@@ -85,7 +90,55 @@ async function initDatabase() {
 }
 initDatabase().catch(console.error);
 
-// ========== SETTINGS ==========
+// ========== SETTINGS (full object load/save) ==========
+let settingsCache = null;
+
+async function loadSettings() {
+    if (settingsCache) return settingsCache;
+    const res = await pool.query('SELECT key, value FROM settings');
+    const settings = {
+        prefix: '.',
+        botName: '𝐃𝐀𝐑𝐊𝐖𝐄𝐁 𝐀𝐈',
+        welcome: false,
+        goodbye: false,
+        antilink: 'off',
+        antileft: false,
+        antibot: false,
+        antigroupmention: 'off',
+        antitagall: 'off',
+        reactall: false,
+        antebug: false,
+        linkWarnings: new Map(),
+        mentionWarnings: new Map(),
+        tagallWarnings: new Map(),
+        tempbans: new Map()
+    };
+    for (const row of res.rows) {
+        if (row.key === 'linkWarnings' || row.key === 'mentionWarnings' || row.key === 'tagallWarnings' || row.key === 'tempbans') {
+            settings[row.key] = new Map(Object.entries(row.value || {}));
+        } else {
+            settings[row.key] = row.value;
+        }
+    }
+    settingsCache = settings;
+    return settings;
+}
+
+async function saveSettings(settings) {
+    settingsCache = settings;
+    for (const [key, value] of Object.entries(settings)) {
+        let storeValue = value;
+        if (value instanceof Map) {
+            storeValue = Object.fromEntries(value);
+        }
+        await pool.query(
+            'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+            [key, storeValue]
+        );
+    }
+}
+
+// ========== SINGLE KEY GET/SET (alternative) ==========
 async function getSetting(key, defaultValue = null) {
     const res = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
     return res.rows[0]?.value ?? defaultValue;
@@ -95,6 +148,7 @@ async function setSetting(key, value) {
         'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
         [key, value]
     );
+    if (settingsCache) settingsCache[key] = value;
 }
 
 // ========== BANS ==========
@@ -115,7 +169,6 @@ async function isBanned(phone) {
     const res = await pool.query('SELECT 1 FROM bans WHERE phone = $1', [phone]);
     return res.rowCount > 0;
 }
-// Sync compatibility for old code that expects a Map
 let bansCache = new Map();
 async function loadBans() {
     const res = await pool.query('SELECT * FROM bans');
@@ -123,7 +176,7 @@ async function loadBans() {
     for (const row of res.rows) bansCache.set(row.phone, row);
     return bansCache;
 }
-function saveBans() {} // Not needed with PostgreSQL
+function saveBans() {}
 
 // ========== PAIRED DEVICES ==========
 async function setPairedUser(phone, code) {
@@ -176,13 +229,13 @@ async function getBotUsersCount() {
 }
 async function loadBotUsers() {
     const res = await pool.query('SELECT * FROM bot_users');
-    const botUsersMap = new Map();
-    for (const row of res.rows) botUsersMap.set(row.phone, row);
-    return botUsersMap;
+    const map = new Map();
+    for (const row of res.rows) map.set(row.phone, row);
+    return map;
 }
 function saveBotUsers() {}
 
-// ========== PREMIUM USERS ==========
+// ========== PREMIUM ==========
 async function isPremium(phone) {
     const res = await pool.query('SELECT expiry FROM premium_users WHERE phone = $1 AND expiry > $2', [phone, Date.now()]);
     return res.rowCount > 0;
@@ -208,17 +261,16 @@ async function deactivatePremium(phone) {
 }
 async function loadPremium() {
     const res = await pool.query('SELECT * FROM premium_users');
-    const premiumMap = new Map();
-    for (const row of res.rows) premiumMap.set(row.phone, row);
-    return premiumMap;
+    const map = new Map();
+    for (const row of res.rows) map.set(row.phone, row);
+    return map;
 }
 function savePremium() {}
 
-// ========== USER GOLD (Economy) ==========
+// ========== USER GOLD ==========
 async function getUserGold(phone) {
     const res = await pool.query('SELECT * FROM user_gold WHERE phone = $1', [phone]);
     if (res.rows[0]) return res.rows[0];
-    // Default user
     return {
         phone,
         gold: 0,
@@ -275,9 +327,9 @@ async function rejectPayment(id) {
 }
 async function loadPayments() {
     const res = await pool.query('SELECT * FROM payments');
-    const paymentsMap = new Map();
-    for (const row of res.rows) paymentsMap.set(row.id, row);
-    return paymentsMap;
+    const map = new Map();
+    for (const row of res.rows) map.set(row.id, row);
+    return map;
 }
 function savePayments() {}
 
@@ -296,14 +348,13 @@ async function setGroupSetting(groupId, key, value) {
 }
 async function loadGroups() {
     const res = await pool.query('SELECT * FROM group_settings');
-    const groupsMap = new Map();
-    for (const row of res.rows) groupsMap.set(row.group_id, row.settings);
-    return groupsMap;
+    const map = new Map();
+    for (const row of res.rows) map.set(row.group_id, row.settings);
+    return map;
 }
 function saveGroups() {}
 
-// ========== TEMPORARY BANS (in settings JSONB) ==========
-// Since tempbans are time‑sensitive, store in settings table as JSONB
+// ========== TEMP BANS (stored in settings table) ==========
 async function getTempBan(phone) {
     const tempbans = (await getSetting('tempbans', {}));
     const expiry = tempbans[phone];
@@ -331,16 +382,13 @@ async function isTempBanned(phone) {
 
 // ========== CLEANUP ==========
 async function cleanupExpiredData() {
-    // Remove expired premium users
     await pool.query('DELETE FROM premium_users WHERE expiry < $1', [Date.now()]);
-    // Remove expired paired devices
     await pool.query('DELETE FROM paired_users WHERE expires < $1', [Date.now()]);
-    // Remove old pending payments (older than 7 days)
     const weekAgo = Date.now() - (7 * 86400000);
     await pool.query("DELETE FROM payments WHERE status = 'pending' AND requested_on < $1", [weekAgo]);
 }
 
-// ========== LOAD ALL DATA (compatibility with old code) ==========
+// ========== LOAD ALL (legacy compatibility) ==========
 async function loadAll() {
     await loadBans();
     await loadPaired();
@@ -351,10 +399,13 @@ async function loadAll() {
 }
 loadAll().catch(console.error);
 
-// ========== EXPORT ==========
+// ========== EXPORTS ==========
 module.exports = {
-    // Settings
-    getSetting, setSetting,
+    // Core settings (load/save whole object)
+    loadSettings,
+    saveSettings,
+    getSetting,
+    setSetting,
     // Bans
     setBan, removeBan, getBan, isBanned, bans: bansCache, loadBans, saveBans,
     // Paired
